@@ -1,6 +1,7 @@
 use crate::structure::*;
 use algebraeon_macros::repeat_small_primes;
 use algebraeon_structures::*;
+use rayon::prelude::*;
 use std::{borrow::Cow, cmp::Ordering, fmt::Display, hash::Hash, sync::Arc};
 
 fn xgcd(mut x: usize, mut y: usize) -> (usize, isize, isize) {
@@ -392,6 +393,42 @@ impl FiniteFieldSignature for EuclideanRemainderQuotientStructure<IntegerCanonic
     }
 }
 
+impl RingWithRootsOfUnityignature
+    for EuclideanRemainderQuotientStructure<IntegerCanonicalStructure, true>
+{
+    fn primitive_nth_root_of_unity(self: &Arc<Self>, n: usize) -> Option<Self::Elem> {
+        if !(Natural::from(n) % self.ring().characteristic() - Natural::one() == Natural::zero()) {
+            return None;
+        }
+
+        if self.ring().characteristic().is_irreducible() {
+            // Solve the case for prime characterstique
+        } else {
+            //Decompose the ring into local rings and solve in each. Apply CRT to find the final root
+            let factors = self
+                .characteristic_and_power()
+                .0
+                .factor()
+                .into_distinct_irreducibles()
+                .unwrap();
+
+            let nth_roots = factors.into_par_iter().map(|characteristic| {
+                Integer::structure()
+                    .quotient_field(Integer::from(characteristic)).unwrap()
+            }).map(|ring| ring.primitive_nth_root_of_unity(n)).collect::<Vec<Option<_>>>();
+
+
+            if nth_roots.into_par_iter().any(|r| r.is_none()) {
+                return None;
+            }
+
+            
+            
+        }
+
+        todo!()
+    }
+}
 impl<const IS_FIELD: bool> CountableSetSignature
     for EuclideanRemainderQuotientStructure<IntegerCanonicalStructure, IS_FIELD>
 {
@@ -434,4 +471,40 @@ mod tests {
     fn enumeration() {
         algebraeon_structures::assert_enumerated_ord_finite_set!(Modulo::<26>::structure(), 26);
     }
+
+    #[test]
+    fn integer_crt() {
+        let zz = Integer::structure();
+        let ints = |v: Vec<i32>| v.into_iter().map(Integer::from).collect::<Vec<_>>();
+    
+        // vérifie x ≡ expected mod M, sans supposer x réduit
+        let check = |residues: Vec<i32>, moduli: Vec<i32>, expected: i32| {
+            let m = zz.product(&ints(moduli.clone()));
+            let x = zz.crt(ints(residues), ints(moduli)).unwrap();
+            assert!(zz.divisible(&zz.sub(&x, &Integer::from(expected)), &m));
+        };
+    
+        check(vec![2, 3, 2], vec![3, 5, 7], 23); // exemple classique de Sunzi : 23 mod 105
+        check(vec![1, 2], vec![3, 5], 7);        // ℤ/15 : l'ω de tout à l'heure
+        check(vec![3], vec![7], 3);              // un seul modulus
+        check(vec![0, 0], vec![3, 5], 0);        // résidus nuls
+        check(vec![-1, -1], vec![3, 5], -1);     // résidus négatifs
+    
+        // moduli non premiers entre eux, ou nul : None
+        assert!(zz.crt(ints(vec![1, 3]), ints(vec![4, 6])).is_none());
+        assert!(zz.crt(ints(vec![1]), ints(vec![0])).is_none());
+    }
+    
+    #[test]
+    fn integer_crt_exhaustive() {
+        // tout x dans 0..105 doit se retrouver à partir de (x mod 3, x mod 5, x mod 7)
+        let zz = Integer::structure();
+        let moduli = [3, 5, 7].map(Integer::from).to_vec();
+        for x in 0..105 {
+            let residues = [3, 5, 7].map(|m| Integer::from(x % m)).to_vec();
+            let y = zz.crt(residues, moduli.clone()).unwrap();
+            assert!(zz.divisible(&zz.sub(&y, &Integer::from(x)), &Integer::from(105)));
+        }
+    }
+
 }
